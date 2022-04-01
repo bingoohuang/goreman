@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package main
@@ -9,12 +10,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const sigint = unix.SIGINT
-const sigterm = unix.SIGTERM
-const sighup = unix.SIGHUP
+const (
+	sigint  = unix.SIGINT
+	sigterm = unix.SIGTERM
+	sighup  = unix.SIGHUP
+)
 
-var cmdStart = []string{"/bin/sh", "-c"}
-var procAttrs = &unix.SysProcAttr{Setpgid: true}
+var (
+	cmdStart  = []string{"/bin/sh", "-c"}
+	procAttrs = &unix.SysProcAttr{Setpgid: true}
+)
 
 func terminateProc(proc *procInfo, signal os.Signal) error {
 	p := proc.cmd.Process

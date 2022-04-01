@@ -1,3 +1,6 @@
+export MINIO_ROOT_USER=minio
+export MINIO_ROOT_PASSWORD=miniominio
+
 web1: plackup --port $PORT
 web2: plackup --port $PORT
 web3: bundle exec ruby web.rb

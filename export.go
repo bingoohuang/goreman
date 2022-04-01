@@ -8,6 +8,24 @@ import (
 	"strings"
 )
 
+// command: export.
+func export(cfg *config, format, path string) (err error) {
+	procs, err = readProcfile(cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+
+	switch format {
+	case "upstart":
+		return exportUpstart(cfg, path)
+	}
+	return nil
+}
+
 func exportUpstart(cfg *config, path string) error {
 	for i, proc := range procs {
 		f, err := os.Create(filepath.Join(path, "app-"+proc.name+".conf"))
@@ -53,25 +71,6 @@ func exportUpstart(cfg *config, path string) error {
 		fmt.Fprintf(f, "exec %s\n", proc.cmdline)
 
 		f.Close()
-	}
-	return nil
-}
-
-// command: export.
-func export(cfg *config, format, path string) error {
-	err := readProcfile(cfg)
-	if err != nil {
-		return err
-	}
-
-	err = os.MkdirAll(path, 0755)
-	if err != nil {
-		return err
-	}
-
-	switch format {
-	case "upstart":
-		return exportUpstart(cfg, path)
 	}
 	return nil
 }

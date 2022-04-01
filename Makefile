@@ -1,62 +1,111 @@
-BIN := goreman
-VERSION := $$(make -s show-version)
-CURRENT_REVISION := $(shell git rev-parse --short HEAD)
-BUILD_LDFLAGS := "-s -w -X main.revision=$(CURRENT_REVISION)"
-GOBIN ?= $(shell go env GOPATH)/bin
-export GO111MODULE=on
+.PHONY: test install git.commit git.branch default
+all: test install
 
-.PHONY: all
-all: clean build
+app=$(notdir $(shell pwd))
+appVersion := 1.0.0
+goVersion := $(shell go version | sed 's/go version //'|sed 's/ /_/')
+# e.g. 2021-10-28T11:49:52+0800
+buildTime := $(shell date +%FT%T%z)
+# https://git-scm.com/docs/git-rev-list#Documentation/git-rev-list.txt-emaIem
+gitCommit := $(shell [ -f git.commit ] && cat git.commit || git rev-list --oneline --format=format:'%h@%aI' --max-count=1 `git rev-parse HEAD` | tail -1)
+gitBranch := $(shell [ -f git.branch ] && cat git.branch || git rev-parse --abbrev-ref HEAD)
+gitInfo = $(gitBranch)-$(gitCommit)
+#gitCommit := $(shell git rev-list -1 HEAD)
+# https://stackoverflow.com/a/47510909
+pkg := github.com/bingoohuang/gg/pkg/v
 
-.PHONY: build
-build:
-	go build -ldflags=$(BUILD_LDFLAGS) -o $(BIN) .
+extldflags := -extldflags -static
+# https://ms2008.github.io/2018/10/08/golang-build-version/
+# https://github.com/kubermatic/kubeone/blob/master/Makefile
+flags1 = -s -w -X $(pkg).BuildTime=$(buildTime) -X $(pkg).AppVersion=$(appVersion) -X $(pkg).GitCommit=$(gitInfo) -X $(pkg).GoVersion=$(goVersion)
+flags2 = ${extldflags} ${flags1}
+goinstall = go install -trimpath -ldflags='${flags2}' ./...
+gobin := $(shell go env GOBIN)
+# try $GOPATN/bin if $gobin is empty
+gobin := $(if $(gobin),$(gobin),$(shell go env GOPATH)/bin)
 
-.PHONY: install
-install:
-	go install -ldflags=$(BUILD_LDFLAGS) .
+git.commit:
+	echo ${gitCommit} > git.commit
+	echo ${gitBranch} > git.branch
 
-.PHONY: show-version
-show-version: $(GOBIN)/gobump
-	@gobump show -r .
+tool:
+	go get github.com/securego/gosec/cmd/gosec
 
-$(GOBIN)/gobump:
-	@cd && go get github.com/x-motemen/gobump/cmd/gobump
+sec:
+	@gosec ./...
+	@echo "[OK] Go security check was completed!"
 
-.PHONY: cross
-cross: $(GOBIN)/goxz
-	goxz -n $(BIN) -os linux,darwin,windows -arch amd64 -pv=v$(VERSION) -build-ldflags=$(BUILD_LDFLAGS) .
-	goxz -n $(BIN) -os linux,darwin -arch arm64 -pv=v$(VERSION) -build-ldflags=$(BUILD_LDFLAGS) .
+init:
+	export GOPROXY=https://goproxy.cn
 
-$(GOBIN)/goxz:
-	cd && go get github.com/Songmu/goxz/cmd/goxz
+lint-all:
+	golangci-lint run --enable-all
 
-.PHONY: test
-test: build
-	go test -v ./...
+lint:
+	golangci-lint run ./...
 
-.PHONY: clean
+fmt:
+	gofumpt -l -w .
+	gofmt -s -w .
+	go mod tidy
+	go fmt ./...
+	revive .
+	goimports -w .
+	gci -w -local github.com/daixiang0/gci
+
+install: init
+	${goinstall}
+	upx --best --lzma ${gobin}/${app}
+	ls -lh ${gobin}/${app}
+linux: init
+	GOOS=linux GOARCH=amd64 ${goinstall}
+	upx --best --lzma ${gobin}/linux_amd64/${app}
+	ls -lh  ${gobin}/linux_amd64/${app}
+arm: init
+	GOOS=linux GOARCH=arm64 ${goinstall}
+	upx --best --lzma ${gobin}/linux_arm64/${app}
+	ls -lh  ${gobin}/linux_arm64/${app}
+
+upx:
+	ls -lh ${gobin}/${app}
+	upx ${gobin}/${app}
+	ls -lh ${gobin}/${app}
+	ls -lh ${gobin}/linux_amd64/${app}
+	upx ${gobin}/linux_amd64/${app}
+	ls -lh ${gobin}/linux_amd64/${app}
+
+test: init
+	#go test -v ./...
+	go test -v -race ./...
+
+bench: init
+	#go test -bench . ./...
+	go test -tags bench -benchmem -bench . ./...
+
 clean:
-	rm -rf $(BIN) goxz
-	go clean
+	rm coverage.out
 
-.PHONY: bump
-bump: $(GOBIN)/gobump
-ifneq ($(shell git status --porcelain),)
-	$(error git workspace is dirty)
-endif
-ifneq ($(shell git rev-parse --abbrev-ref HEAD),master)
-	$(error current branch is not master)
-endif
-	@gobump up -w .
-	git commit -am "bump up version to $(VERSION)"
-	git tag "v$(VERSION)"
-	git push origin master
-	git push origin "refs/tags/v$(VERSION)"
+cover:
+	go test -v -race -coverpkg=./... -coverprofile=coverage.out ./...
 
-.PHONY: upload
-upload: $(GOBIN)/ghr
-	ghr "v$(VERSION)" goxz
+coverview:
+	go tool cover -html=coverage.out
 
-$(GOBIN)/ghr:
-	cd && go get github.com/tcnksm/ghr
+# https://hub.docker.com/_/golang
+# docker run --rm -v "$PWD":/usr/src/myapp -v "$HOME/dockergo":/go -w /usr/src/myapp golang make docker
+# docker run --rm -it -v "$PWD":/usr/src/myapp -w /usr/src/myapp golang bash
+# 静态连接 glibc
+docker:
+	mkdir -p ~/dockergo
+	docker run --rm -v "$$PWD":/usr/src/myapp -v "$$HOME/dockergo":/go -w /usr/src/myapp golang make dockerinstall
+	#upx ~/dockergo/bin/${app}
+	gzip -f ~/dockergo/bin/${app}
+
+dockerinstall:
+	go install -v -x -a -ldflags=${flags} ./...
+
+targz:
+	find . -name ".DS_Store" -delete
+	find . -type f -name '\.*' -print
+	cd .. && rm -f ${app}.tar.gz && tar czvf ${app}.tar.gz --exclude .git --exclude .idea ${app}
+

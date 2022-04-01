@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bingoohuang/gg/pkg/v"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
@@ -24,7 +25,6 @@ import (
 // time by goreleaser (see .goreleaser.yml).
 const (
 	name     = "goreman"
-	version  = "0.3.11"
 	revision = "HEAD"
 )
 
@@ -59,6 +59,7 @@ type procInfo struct {
 	port       uint
 	setPort    bool
 	colorIndex int
+	env        []string
 
 	// True if we called stopProc to kill the process, in which case an
 	// *os.ExitError is not the fault of the subprocess
@@ -74,42 +75,27 @@ var mu sync.Mutex
 // process informations named with proc.
 var procs []*procInfo
 
-// filename of Procfile.
-var procfile = flag.String("f", "Procfile", "proc file")
+var (
+	procfile    = flag.String("f", "Procfile", "filename of Procfile")
+	port        = flag.Uint("p", defaultPort(), "rpc port number")
+	basedir     = flag.String("basedir", "", "base directory")
+	baseport    = flag.Uint("b", 5000, "base of port numbers for app")
+	setPorts    = flag.Bool("set-ports", true, "False to avoid setting PORT env var for each subprocess")
+	exitOnError = flag.Bool("exit-on-error", false, "Exit goreman if a subprocess quits with a nonzero return code")
+	exitOnStop  = flag.Bool("exit-on-stop", true, "Exit goreman if all subprocesses stop")
+	logTime     = flag.Bool("logtime", true, "show timestamp in log")
 
-// rpc port number.
-var port = flag.Uint("p", defaultPort(), "port")
-
-// base directory
-var basedir = flag.String("basedir", "", "base directory")
-
-// base of port numbers for app
-var baseport = flag.Uint("b", 5000, "base number of port")
-
-var setPorts = flag.Bool("set-ports", true, "False to avoid setting PORT env var for each subprocess")
-
-// true to exit the supervisor
-var exitOnError = flag.Bool("exit-on-error", false, "Exit goreman if a subprocess quits with a nonzero return code")
-
-// true to exit the supervisor when all processes stop
-var exitOnStop = flag.Bool("exit-on-stop", true, "Exit goreman if all subprocesses stop")
-
-// show timestamp in log
-var logTime = flag.Bool("logtime", true, "show timestamp in log")
-
-var maxProcNameLength = 0
-
-var re = regexp.MustCompile(`\$([a-zA-Z]+[a-zA-Z0-9_]+)`)
+	maxProcNameLength = 0
+	re                = regexp.MustCompile(`\$([a-zA-Z]+[a-zA-Z0-9_]+)`)
+)
 
 type config struct {
-	Procfile string `yaml:"procfile"`
-	// Port for RPC server
-	Port     uint   `yaml:"port"`
-	BaseDir  string `yaml:"basedir"`
-	BasePort uint   `yaml:"baseport"`
-	Args     []string
-	// If true, exit the supervisor process if a subprocess exits with an error.
-	ExitOnError bool `yaml:"exit_on_error"`
+	Procfile    string `yaml:"procfile"`
+	Port        uint   `yaml:"port"` // Port for RPC server
+	BaseDir     string `yaml:"basedir"`
+	BasePort    uint   `yaml:"baseport"`
+	Args        []string
+	ExitOnError bool `yaml:"exit_on_error"` // If true, exit the goreman process if a subprocess exits with an error.
 }
 
 func readConfig() *config {
@@ -134,29 +120,41 @@ func readConfig() *config {
 	return &cfg
 }
 
+var exportEnvRegex = regexp.MustCompile(`^export\s+`)
+
 // read Procfile and parse it.
-func readProcfile(cfg *config) error {
+func readProcfile(cfg *config) (procs []*procInfo, err error) {
 	content, err := ioutil.ReadFile(cfg.Procfile)
 	if err != nil {
-		return err
+		return procs, err
 	}
 	mu.Lock()
 	defer mu.Unlock()
 
-	procs = []*procInfo{}
-	index := 0
+	colorIndex := 0
+	var env []string
+
 	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		exportMatch := exportEnvRegex.FindString(line)
+		if exportMatch != "" {
+			env = append(env, strings.TrimSpace(line[len(exportMatch):]))
+			continue
+		}
+
 		tokens := strings.SplitN(line, ":", 2)
 		if len(tokens) != 2 || tokens[0][0] == '#' {
 			continue
 		}
 		k, v := strings.TrimSpace(tokens[0]), strings.TrimSpace(tokens[1])
 		if runtime.GOOS == "windows" {
-			v = re.ReplaceAllStringFunc(v, func(s string) string {
-				return "%" + s[1:] + "%"
-			})
+			v = re.ReplaceAllStringFunc(v, func(s string) string { return "%" + s[1:] + "%" })
 		}
-		proc := &procInfo{name: k, cmdline: v, colorIndex: index}
+		proc := &procInfo{name: k, cmdline: v, colorIndex: colorIndex, env: env}
 		if *setPorts {
 			proc.setPort = true
 			proc.port = cfg.BasePort
@@ -167,12 +165,30 @@ func readProcfile(cfg *config) error {
 		if len(k) > maxProcNameLength {
 			maxProcNameLength = len(k)
 		}
-		index = (index + 1) % len(colors)
+		colorIndex = (colorIndex + 1) % len(colors)
 	}
 	if len(procs) == 0 {
-		return errors.New("no valid entry")
+		return nil, errors.New("no valid entry")
 	}
-	return nil
+
+	procNames := make(map[string]int)
+	for _, proc := range procs {
+		procNames[proc.name] = procNames[proc.name] + 1
+	}
+	for _, proc := range procs {
+		if procNames[proc.name] == 1 {
+			delete(procNames, proc.name)
+		}
+	}
+	for i := len(procNames) - 1; i >= 0; i-- {
+		proc := procs[i]
+		if idx, ok := procNames[proc.name]; ok {
+			proc.name += fmt.Sprintf("-%d", idx)
+			procNames[proc.name] = idx - 1
+		}
+	}
+
+	return procs, nil
 }
 
 func defaultServer(serverPort uint) string {
@@ -193,8 +209,7 @@ func defaultAddr() string {
 func defaultPort() uint {
 	s := os.Getenv("GOREMAN_RPC_PORT")
 	if s != "" {
-		i, err := strconv.Atoi(s)
-		if err == nil {
+		if i, err := strconv.Atoi(s); err == nil {
 			return uint(i)
 		}
 	}
@@ -203,7 +218,7 @@ func defaultPort() uint {
 
 // command: check. show Procfile entries.
 func check(cfg *config) error {
-	err := readProcfile(cfg)
+	procs, err := readProcfile(cfg)
 	if err != nil {
 		return err
 	}
@@ -212,10 +227,8 @@ func check(cfg *config) error {
 	defer mu.Unlock()
 
 	keys := make([]string, len(procs))
-	i := 0
-	for _, proc := range procs {
+	for i, proc := range procs {
 		keys[i] = proc.name
-		i++
 	}
 	sort.Strings(keys)
 	fmt.Printf("valid procfile detected (%s)\n", strings.Join(keys, ", "))
@@ -235,8 +248,8 @@ func findProc(name string) *procInfo {
 }
 
 // command: start. spawn procs.
-func start(ctx context.Context, sig <-chan os.Signal, cfg *config) error {
-	err := readProcfile(cfg)
+func start(ctx context.Context, sig <-chan os.Signal, cfg *config) (err error) {
+	procs, err = readProcfile(cfg)
 	if err != nil {
 		return err
 	}
@@ -265,12 +278,12 @@ func start(ctx context.Context, sig <-chan os.Signal, cfg *config) error {
 	godotenv.Load()
 	rpcChan := make(chan *rpcMessage, 10)
 	go startServer(ctx, rpcChan, cfg.Port)
-	procsErr := startProcs(sig, rpcChan, cfg.ExitOnError)
-	return procsErr
+	err = startProcs(sig, rpcChan, cfg.ExitOnError)
+	return err
 }
 
 func showVersion() {
-	fmt.Fprintf(os.Stdout, "%s\n", version)
+	fmt.Fprintf(os.Stdout, "%s\n", v.Version())
 	os.Exit(0)
 }
 

@@ -25,6 +25,14 @@ func spawnProc(name string, errCh chan<- error) {
 		cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", proc.port))
 		fmt.Fprintf(logger, "Starting %s on port %d\n", name, proc.port)
 	}
+
+	if len(proc.env) > 0 {
+		cmd.Env = append(cmd.Env, proc.env...)
+		for _, env := range proc.env {
+			fmt.Fprintf(logger, "Set env %s\n", env)
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		select {
 		case errCh <- err:

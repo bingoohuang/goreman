@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 		}
 		sleep = filepath.Join(dir, "sleep.exe")
 		src := filepath.Join(dir, "sleep.go")
-		err = ioutil.WriteFile(src, []byte(code), 0644)
+		err = ioutil.WriteFile(src, []byte(code), 0o644)
 		if err != nil {
 			panic(err)
 		}
@@ -69,7 +69,7 @@ func startGoreman(ctx context.Context, t *testing.T, ch <-chan os.Signal, file [
 }
 
 func TestGoreman(t *testing.T) {
-	var file = []byte(`
+	file := []byte(`
 web1: sleep 0.1
 web2: sleep 0.1
 web3: sleep 0.1
@@ -81,7 +81,7 @@ web4: sleep 0.1
 }
 
 func TestGoremanSignal(t *testing.T) {
-	var file = []byte(`
+	file := []byte(`
 web1: sleep 10
 web2: sleep 10
 web3: sleep 10
@@ -102,7 +102,7 @@ web4: sleep 10
 }
 
 func TestGoremanExitsOnError(t *testing.T) {
-	var file = []byte(`
+	file := []byte(`
 web1: sleep 10
 web2: sleep 0.01 && foobarbangbazunknownproc
 web3: sleep 10
@@ -119,7 +119,7 @@ web4: sleep 10
 }
 
 func TestGoremanExitsOnErrorOtherWay(t *testing.T) {
-	var file = []byte(`
+	file := []byte(`
 web1: sleep 10
 web2: sleep 0.01 && exit 2
 web3: sleep 10
@@ -136,7 +136,7 @@ web4: sleep 10
 }
 
 func TestGoremanStopProcDoesntStopOtherProcs(t *testing.T) {
-	var file = []byte(`
+	file := []byte(`
 web1: sleep 10
 web2: sleep 10
 web3: sleep 10

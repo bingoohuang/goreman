@@ -1,27 +1,28 @@
 # Goreman
 
-Clone of foreman written in golang.
+Clone of [foreman](https://github.com/ddollar/foreman) written in golang.
 
-https://github.com/ddollar/foreman
-
+1. Install `go install github.com/mattn/goreman@latest`
 ## Getting Started
-
-    go install github.com/mattn/goreman@latest
-
-## Usage
 
     goreman start
 
 Will start all commands defined in the `Procfile` and display their outputs.
 Any signals are forwarded to each process.
 
+```Procfile
+export MINIO_ROOT_USER=minio
+export MINIO_ROOT_PASSWORD=miniominio
+
+web1: plackup --port $PORT
+web2: plackup --port $PORT
+web3: bundle exec ruby web.rb
+web4: go run web.go -a :$PORT
+```
+
 ## Example
 
 See [`_example`](_example/) directory
-
-## License
-
-MIT
 
 ## Design
 

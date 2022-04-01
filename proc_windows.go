@@ -8,10 +8,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var cmdStart = []string{"cmd", "/c"}
-var procAttrs = &windows.SysProcAttr{
-	CreationFlags: windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP,
-}
+var (
+	cmdStart  = []string{"cmd", "/c"}
+	procAttrs = &windows.SysProcAttr{
+		CreationFlags: windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP,
+	}
+)
 
 func terminateProc(proc *procInfo, _ os.Signal) error {
 	dll, err := windows.LoadDLL("kernel32.dll")
